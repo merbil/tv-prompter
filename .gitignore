@@ -1,0 +1,10 @@
+# local build output (the release APK lives in dist/)
+/Prompter.apk
+*.idsig
+# never commit signing keys
+*.keystore
+*.jks
+# planning notes stay local
+/PLAN.md
+.DS_Store
+.claude/

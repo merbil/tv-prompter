@@ -1,0 +1,305 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prompter</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #f2f2f2; overflow: hidden;
+    font-family: "Roboto", "Helvetica Neue", Arial, sans-serif; }
+  #stage { position: absolute; inset: 0; overflow: hidden; transition: transform 3s ease-in-out; }
+  /* burn-in care: the marker and progress line only show for a few seconds after a button press */
+  #marker, #progress { opacity: 0; transition: opacity 1.2s; }
+  body.active #marker, body.active #progress { opacity: 1; }
+  #text { transition: opacity 4s; }
+  #text.dim { opacity: 0.18; }
+  #text { position: absolute; left: 8vw; right: 8vw; top: 0; will-change: transform;
+    padding: 38vh 0 70vh; line-height: 1.45; white-space: pre-wrap; word-wrap: break-word; }
+  #text { white-space: normal; }
+  #text h1, #text h2, #text h3 { margin: 0.6em 0 0.3em; color: #ffd27a; font-weight: 700; line-height: 1.25; }
+  #text h1 { font-size: 1.15em; }
+  #text h2 { font-size: 1.05em; }
+  #text h3 { font-size: 1em; color: #e8c88a; }
+  #text p { margin: 0 0 0.9em; }
+  #text ul, #text ol { margin: 0 0 0.9em; padding-left: 1.3em; }
+  #text li { margin: 0 0 0.3em; }
+  #text li::marker { color: #ffd27a; }
+  #text blockquote { margin: 0 0 0.9em; padding-left: 0.8em; border-left: 0.12em solid #ffd27a; color: #cfcfcf; font-style: italic; }
+  #text hr { border: 0; border-top: 2px solid #444; margin: 1em 0; }
+  #text b { color: #fff; font-weight: 700; }
+  #text code { font-family: monospace; background: #1c1c1c; padding: 0 0.2em; border-radius: 0.15em; }
+  #text > :first-child { margin-top: 0; }
+  /* soft fade at the top and bottom so lines arrive and leave gently */
+  .fade { position: absolute; left: 0; right: 0; height: 22vh; pointer-events: none; z-index: 2; }
+  .fade.top { top: 0; background: linear-gradient(#000 15%, rgba(0,0,0,0)); }
+  .fade.bottom { bottom: 0; background: linear-gradient(rgba(0,0,0,0), #000 85%); }
+  /* reading line: a faint marker where your eyes should sit */
+  #marker { position: absolute; left: 2.5vw; top: calc(38vh + 0.35em); font-size: 3.4vw; width: 0; height: 0; z-index: 3;
+    border-top: 14px solid transparent; border-bottom: 14px solid transparent;
+    border-left: 20px solid rgba(255, 210, 122, 0.55); }
+  /* one bar along the bottom: remote help on the left, current state on the right */
+  #bar { position: absolute; left: 0; right: 0; bottom: 0; z-index: 4; display: flex; align-items: center;
+    justify-content: space-between; gap: 24px; padding: 14px 3vw 18px; background: #000;
+    border-top: 1px solid rgba(255, 255, 255, 0.08); font-size: 18px; opacity: 0; transition: opacity 0.4s; }
+  #bar.show { opacity: 1; }
+  #help { color: #8a8a8a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #help b { color: #cfcfcf; font-weight: 600; }
+  #hud { color: #fff; font-size: 22px; white-space: nowrap; }
+  #addr { color: #6f6f6f; white-space: nowrap; }
+  #progress { position: absolute; left: 0; bottom: 0; height: 4px; background: rgba(255, 210, 122, 0.5);
+    width: 0; z-index: 4; }
+  #empty { position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+    flex-direction: column; text-align: center; font-size: 34px; color: #bbb; z-index: 5; }
+  #empty b { color: #fff; font-size: 48px; display: block; margin-bottom: 24px; }
+  #empty code { color: #ffd27a; font-size: 40px; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="text"></div>
+  <div class="fade top"></div>
+  <div class="fade bottom"></div>
+  <div id="marker"></div>
+  <div id="progress"></div>
+  <div id="bar">
+    <div id="help"></div>
+    <div id="addr">notes: <span class="addr"></span>/edit</div>
+    <div id="hud"></div>
+  </div>
+  <div id="empty"><b>No notes yet</b>Open <code><span class="addr"></span>/edit</code><br>on your phone or computer, paste your notes and press Save.</div>
+</div>
+<script>
+(function () {
+  var SPEEDS = [2, 3, 4, 5, 6, 8, 10, 12, 15, 18, 22, 27, 33, 40, 50, 65, 80, 100]; // pixels per second
+  var SIZES = [1.8, 2.2, 2.6, 3, 3.4, 3.9, 4.4, 5, 5.7, 6.5, 7.5, 8.6]; // percent of screen width
+  var text = document.getElementById('text');
+  var hud = document.getElementById('hud');
+  var bar = document.getElementById('bar');
+  var help = document.getElementById('help');
+  var progress = document.getElementById('progress');
+  var empty = document.getElementById('empty');
+
+  function load(key, fallback) {
+    try { var v = localStorage.getItem(key); return v === null ? fallback : JSON.parse(v); }
+    catch (e) { return fallback; }
+  }
+  function save(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) {} }
+
+  var speedIdx = load('speedIdx', 3);
+  var sizeIdx = load('sizeIdx2', 4);
+  var pos = load('pos', 0);
+  var version = load('version', -1);
+  var playing = false;
+  var lastKey = Date.now();
+  var pausedSince = Date.now();
+  var dimmed = false;
+  var awake = true;
+  var DIM_AFTER = 2 * 60 * 1000;      // paused this long: fade the text right down
+  var RELEASE_AFTER = 10 * 60 * 1000; // paused this long: let the TV's screensaver take over
+  // every minute the whole screen moves to the next of these offsets (px), so nothing sits on the same pixels
+  var DRIFT = [[0, 0], [5, 3], [-4, 6], [6, -4], [-6, -3], [3, -6], [-3, 4], [4, 5]];
+  var driftIdx = 0;
+  var last = 0;
+  var hudTimer = 0;
+  var glide = 0; // distance still to travel from Up/Down presses, eased out over a few frames
+
+  function escapeHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  // Markdown-friendly: # ## ### headings, - * + and 1. lists, > quotes, --- dividers, **bold**,
+  // *italic* / _italic_, `code` and ~~strike~~. A blank line starts a new paragraph; single line breaks are kept.
+  function inline(s) {
+    return escapeHtml(s)
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*|__([^_]+)__/g, function (m, a, b) { return '<b>' + (a || b) + '</b>'; })
+      .replace(/(^|[^*\w])\*([^*\s][^*]*)\*/g, '$1<i>$2</i>')
+      .replace(/(^|[^_\w])_([^_\s][^_]*)_(?!\w)/g, '$1<i>$2</i>')
+      .replace(/~~([^~]+)~~/g, '<s>$1</s>');
+  }
+  function render(src) {
+    var lines = src.replace(/\r/g, '').split('\n');
+    var out = [], para = [], list = null;
+    function flushPara() { if (para.length) { out.push('<p>' + para.map(inline).join('<br>') + '</p>'); para = []; } }
+    function flushList() { if (list) { out.push('<' + list.tag + '>' + list.items.join('') + '</' + list.tag + '>'); list = null; } }
+    lines.forEach(function (line) {
+      var m;
+      if (!line.trim()) { flushPara(); flushList(); return; }
+      if ((m = line.match(/^\s*(#{1,3})\s+(.*)$/))) {
+        flushPara(); flushList();
+        out.push('<h' + m[1].length + '>' + inline(m[2]) + '</h' + m[1].length + '>');
+      } else if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) {
+        flushPara(); flushList(); out.push('<hr>');
+      } else if ((m = line.match(/^\s*([-*+]|\d+[.)])\s+(.*)$/))) {
+        flushPara();
+        var tag = /\d/.test(m[1]) ? 'ol' : 'ul';
+        if (!list || list.tag !== tag) { flushList(); list = { tag: tag, items: [] }; }
+        list.items.push('<li>' + inline(m[2]) + '</li>');
+      } else if ((m = line.match(/^\s*>\s?(.*)$/))) {
+        flushPara(); flushList(); out.push('<blockquote>' + inline(m[1]) + '</blockquote>');
+      } else {
+        flushList(); para.push(line);
+      }
+    });
+    flushPara(); flushList();
+    var html = out.join('');
+    text.innerHTML = html;
+    empty.style.display = src.trim() ? 'none' : 'flex';
+  }
+
+  function maxPos() { return Math.max(0, text.offsetHeight - window.innerHeight * 0.45); }
+  function clamp() { pos = Math.min(Math.max(pos, 0), maxPos()); }
+  function paint() {
+    text.style.transform = 'translate3d(0,' + (-pos).toFixed(2) + 'px,0)';
+    var m = maxPos();
+    progress.style.width = (m ? (pos / m) * 100 : 0) + '%';
+  }
+  function fontPx() { return SIZES[sizeIdx] * window.innerWidth / 100; }
+  function applySize() { text.style.fontSize = SIZES[sizeIdx] + 'vw'; clamp(); paint(); }
+
+  function showHud(msg) {
+    hud.textContent = msg;
+    bar.classList.add('show');
+    clearTimeout(hudTimer);
+    hudTimer = setTimeout(function () { bar.classList.remove('show'); }, 2500);
+  }
+  function status(prefix) {
+    help.innerHTML = playing
+      ? '<b>OK</b> pause &nbsp; <b>&#9650;&#9660;</b> move &nbsp; <b>&#9664;&#9654;</b> speed'
+      : '<b>OK</b> play &nbsp; <b>&#9650;&#9660;</b> move &nbsp; <b>&#9664;&#9654;</b> size';
+    return (prefix ? prefix + '  ·  ' : '') + 'Speed ' + (speedIdx + 1) + '/' + SPEEDS.length +
+      '  ·  Size ' + (sizeIdx + 1) + '/' + SIZES.length;
+  }
+
+  function frame(t) {
+    var dt = last ? Math.min(t - last, 100) / 1000 : 0;
+    last = t;
+    var moved = false;
+    if (glide) {
+      var step = Math.abs(glide) < 0.5 ? glide : glide * Math.min(1, dt * 14);
+      pos += step; glide -= step;
+      var before = pos; clamp();
+      if (pos !== before) glide = 0;
+      moved = true;
+    }
+    if (playing && dt) {
+      pos += SPEEDS[speedIdx] * dt;
+      if (pos >= maxPos()) { pos = maxPos(); stopPlaying(); showHud(status('End  ·  OK to start again')); }
+      moved = true;
+    }
+    if (moved) paint();
+    requestAnimationFrame(frame);
+  }
+  function move(lines) {
+    glide += fontPx() * 1.45 * lines;
+  }
+
+  function fetchNotes(resetPosition) {
+    var x = new XMLHttpRequest();
+    x.open('GET', '/notes?t=' + Date.now());
+    x.onload = function () {
+      var v = Number(x.getResponseHeader('X-Version')) || 0;
+      render(x.responseText);
+      if (resetPosition || v !== version) { pos = 0; stopPlaying(); }
+      version = v;
+      save('version', v);
+      applySize();
+    };
+    x.send();
+  }
+  function poll() {
+    var x = new XMLHttpRequest();
+    x.open('GET', '/version?t=' + Date.now());
+    x.onload = function () {
+      if (Number(x.responseText) !== version) { fetchNotes(true); showHud('New notes loaded'); }
+    };
+    x.send();
+  }
+  function address() {
+    var x = new XMLHttpRequest();
+    x.open('GET', '/address');
+    x.onload = function () {
+      var els = document.querySelectorAll('.addr');
+      var a = x.responseText.replace(/^https?:\/\//, '');
+      for (var i = 0; i < els.length; i++) els[i].textContent = a;
+    };
+    x.send();
+  }
+
+  document.addEventListener('keydown', function (e) {
+    var k = e.key, c = e.keyCode;
+    var handled = true;
+    if (k === 'Enter' || c === 23 || c === 13 || k === 'MediaPlayPause' || c === 179 || k === ' ') {
+      if (!playing && pos >= maxPos() - 1) pos = 0;
+      if (playing) stopPlaying(); else playing = true;
+      showHud(status(playing ? 'Playing' : 'Paused'));
+    } else if (k === 'ArrowUp') {
+      move(-1); showHud(status('Back'));
+    } else if (k === 'ArrowDown') {
+      move(1); showHud(status('Forward'));
+    } else if (k === 'ArrowRight' && playing) {
+      speedIdx = Math.min(speedIdx + 1, SPEEDS.length - 1); showHud(status('Faster'));
+    } else if (k === 'ArrowLeft' && playing) {
+      speedIdx = Math.max(speedIdx - 1, 0); showHud(status('Slower'));
+    } else if (k === 'ArrowRight') {
+      sizeIdx = Math.min(sizeIdx + 1, SIZES.length - 1); applySize(); showHud(status('Bigger'));
+    } else if (k === 'ArrowLeft') {
+      sizeIdx = Math.max(sizeIdx - 1, 0); applySize(); showHud(status('Smaller'));
+    } else if (k === 'MediaFastForward' || c === 90 || k === 'ChannelDown' || k === 'PageDown') {
+      move(6); showHud(status('Jump forward'));
+    } else if (k === 'MediaRewind' || c === 89 || k === 'ChannelUp' || k === 'PageUp') {
+      move(-6); showHud(status('Jump back'));
+    } else if (k === '0' || k === 'MoveHome') {
+      pos = 0; glide = 0; stopPlaying(); paint(); showHud(status('Back to start'));
+    } else {
+      handled = false;
+    }
+    activity();
+    if (handled) {
+      e.preventDefault();
+      save('speedIdx', speedIdx);
+      save('sizeIdx2', sizeIdx);
+    }
+  });
+
+  function stopPlaying() {
+    if (playing) pausedSince = Date.now();
+    playing = false;
+  }
+  function setAwake(on) {
+    if (awake === on) return;
+    awake = on;
+    try { if (window.Prompter) window.Prompter.keepAwake(on); } catch (e) {}
+  }
+  function activity() {
+    lastKey = Date.now();
+    document.body.classList.add('active');
+    if (dimmed) { dimmed = false; text.classList.remove('dim'); }
+    setAwake(true);
+  }
+  setInterval(function () {
+    var now = Date.now();
+    if (now - lastKey > 4000) document.body.classList.remove('active');
+    if (!playing) {
+      var idle = now - Math.max(lastKey, pausedSince);
+      if (!dimmed && idle > DIM_AFTER) { dimmed = true; text.classList.add('dim'); }
+      if (idle > RELEASE_AFTER) setAwake(false);
+    }
+  }, 1000);
+  setInterval(function () {
+    driftIdx = (driftIdx + 1) % DRIFT.length;
+    document.getElementById('stage').style.transform =
+      'translate(' + DRIFT[driftIdx][0] + 'px,' + DRIFT[driftIdx][1] + 'px)';
+  }, 60 * 1000);
+  setInterval(function () { save('pos', pos); }, 2000);
+  setInterval(poll, 3000);
+  window.addEventListener('resize', function () { clamp(); paint(); });
+
+  address();
+  fetchNotes(false);
+  requestAnimationFrame(frame);
+  activity();
+  setTimeout(function () { showHud(status('OK to start')); }, 600);
+})();
+</script>
+</body>
+</html>

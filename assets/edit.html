@@ -1,0 +1,77 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prompter notes</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f6f6f4; --fg: #1d1d1f; --muted: #6b6b70; --card: #fff;
+    --line: #dcdcd8; --accent: #c8891f; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #141416; --fg: #ececee; --muted: #9a9aa0; --card: #1e1e21; --line: #2e2e33; --accent: #ffd27a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 40px; display: flex; flex-direction: column;
+    gap: 14px; min-height: 100vh; }
+  h1 { margin: 0; font-size: 22px; }
+  p { margin: 0; color: var(--muted); font-size: 14px; }
+  textarea { flex: 1; min-height: 60vh; width: 100%; padding: 16px; border: 1px solid var(--line);
+    border-radius: 12px; background: var(--card); color: var(--fg); font-size: 18px; line-height: 1.55;
+    font-family: inherit; resize: vertical; }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  button { padding: 12px 22px; border: 0; border-radius: 999px; background: var(--fg); color: var(--bg);
+    font-size: 16px; font-weight: 600; font-family: inherit; cursor: pointer; }
+  button:disabled { opacity: 0.5; }
+  #state { color: var(--muted); font-size: 14px; }
+  .cheats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin: 0; }
+  .cheats div { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 1px solid var(--line);
+    border-radius: 10px; background: var(--card); }
+  .cheats dt { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; color: var(--accent); }
+  .cheats dd { margin: 0; font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Prompter notes</h1>
+  <p>Paste or type your notes, then Save. The TV loads them within a few seconds and starts from the top.
+     You can use plain text or Markdown. Leave a blank line between paragraphs.</p>
+  <textarea id="notes" spellcheck="true" placeholder="Your notes…"></textarea>
+  <dl class="cheats" aria-label="Markdown cheat sheet">
+    <div><dt># Title</dt><dd>big heading</dd></div>
+    <div><dt>## Section</dt><dd>smaller heading</dd></div>
+    <div><dt>**bold**</dt><dd><b>bold</b></dd></div>
+    <div><dt>*italic*</dt><dd><i>italic</i></dd></div>
+    <div><dt>- item</dt><dd>bullet list</dd></div>
+    <div><dt>1. item</dt><dd>numbered list</dd></div>
+    <div><dt>&gt; quote</dt><dd>quote</dd></div>
+    <div><dt>---</dt><dd>divider</dd></div>
+  </dl>
+  <div class="row">
+    <button id="save">Save to TV</button>
+    <span id="state">Loading…</span>
+  </div>
+</main>
+<script>
+  var notes = document.getElementById('notes');
+  var state = document.getElementById('state');
+  var btn = document.getElementById('save');
+  fetch('/notes').then(function (r) { return r.text(); }).then(function (t) {
+    notes.value = t; state.textContent = t ? 'Loaded what is on the TV' : 'No notes on the TV yet';
+  }).catch(function () { state.textContent = 'Could not reach the TV. Is Prompter open?'; });
+  function save() {
+    btn.disabled = true; state.textContent = 'Saving…';
+    fetch('/notes', { method: 'POST', headers: { 'Content-Type': 'text/plain; charset=utf-8' }, body: notes.value })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); state.textContent = 'Saved ✓  The TV will update in a few seconds.'; })
+      .catch(function () { state.textContent = 'Not saved. Is Prompter open on the TV?'; })
+      .then(function () { btn.disabled = false; });
+  }
+  btn.addEventListener('click', save);
+  notes.addEventListener('keydown', function (e) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); save(); }
+  });
+</script>
+</body>
+</html>

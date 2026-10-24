@@ -1,0 +1,25 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - name: Android SDK packages
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0" > /dev/null
+      - name: Build
+        run: JAVA_HOME="$JAVA_HOME_17_X64" scripts/build-apk.sh
+      - name: Check the APK
+        run: |
+          AAPT="$ANDROID_HOME/build-tools/34.0.0/aapt"
+          "$AAPT" dump badging Prompter.apk | tee badging.txt
+          grep -q "package: name='com.merterbil.prompter'" badging.txt
+          grep -q "sdkVersion:'26'" badging.txt
+          grep -q "leanback-launchable-activity" badging.txt
+          test "$(grep -c '^uses-permission:' badging.txt)" = 1
+          grep -q "uses-permission: name='android.permission.INTERNET'" badging.txt
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify Prompter.apk
