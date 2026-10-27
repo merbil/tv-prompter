@@ -6,7 +6,7 @@ A free teleprompter for Android TV and Google TV.</p>
 
 <p align="center">
   <a href="https://github.com/merbil/tv-prompter/releases/latest"><b>Download the APK</b></a> ·
-  <a href="https://merbil.github.io/tv-prompter/">Website</a> ·
+  <a href="https://merterbil.com/tv-prompter/">Website</a> ·
   <a href="RELEASE_NOTES.md">Release notes</a> ·
   <a href="https://buymeacoffee.com/merbil">Buy me a coffee</a>
 </p>
